@@ -188,6 +188,7 @@
           <option value="likes">Most popular</option>
           <option value="newest">Newest</option>
           <option value="relevance">Relevance</option>
+          <option value="lowpoly">Fewest polygons</option>
         </select>
       </div>
       <div class="group">
@@ -195,6 +196,23 @@
         <div class="checks">
           <label><input type="checkbox" id="noCredit"> No credit required</label>
           <label><input type="checkbox" id="canModify"> Can share modified versions</label>
+        </div>
+      </div>
+      <div class="group">
+        <label class="label" for="budget">Polygon budget</label>
+        <select id="budget" data-research>
+          <option value="">Any</option>
+          <option value="5000">Low-poly (≤ 5k triangles)</option>
+          <option value="20000">≤ 20k triangles</option>
+          <option value="50000">≤ 50k triangles</option>
+          <option value="100000">≤ 100k triangles</option>
+        </select>
+      </div>
+      <div class="group">
+        <span class="label">Game</span>
+        <div class="checks">
+          <label><input type="checkbox" id="animated" data-research> Animated</label>
+          <label><input type="checkbox" id="rigged" data-research> Rigged</label>
         </div>
       </div>
       <div class="group">
@@ -225,6 +243,7 @@
         <li><b>Curated (20):</b> a Sketchfab Staff Pick, or any Poly Haven model (every one is made and reviewed by their team).</li>
         <li><b>Craft (up to 25):</b> texture resolution (up to 15), a full texture set of 3 or more maps (5), and a written description (5).</li>
       </ul>
+      <p>The polygon budget, animated and rigged filters are applied by Sketchfab during the search, so you get a full page of matching models instead of a filtered-down handful. Poly Haven has no animated or rigged models, so it drops out when you tick either box.</p>
       <p>This is a rule of thumb built on public signals. It can't see topology, UVs or scale. Open the 3D preview before you buy anything.</p>
       <p>Licenses are read from each site's own data. Check the license on the model page before you use a model in a commercial project.</p>
     </details>
@@ -279,6 +298,7 @@
     loading: false,
     priceQueue: [],
     priceActive: 0,
+    game: { budget: "", animated: false, rigged: false },
   };
   let polyhavenIndex = null; // loaded once
 
@@ -360,6 +380,7 @@
       texCount: archive ? archive.textureCount : null,
       descLen: (r.description || "").trim().length,
       animated: (r.animationCount || 0) > 0,
+      formats: Object.keys(r.archives || {}),
       licenseLabel: label,
       license: LICENSES[label] || UNKNOWN_LICENSE,
       price: group.price,          // "free" | "paid"
@@ -372,6 +393,11 @@
 
   function sfSearchUrl(group, query) {
     const p = new URLSearchParams({ type: "models", q: query, count: String(PAGE), ...group.params });
+    // Game filters run on Sketchfab's side, so every result page already matches them.
+    const g = state.game;
+    if (g.budget) p.set("max_face_count", g.budget);
+    if (g.animated) p.set("animated", "true");
+    if (g.rigged) p.set("rigged", "true");
     return `${SF_API}/search?${p}`;
   }
 
@@ -385,7 +411,11 @@
         if (r.isAgeRestricted) continue;
         if (group.price === "free" && !r.isDownloadable) continue;
         const key = "sf:" + r.uid;
-        if (!state.items.has(key)) state.items.set(key, fromSketchfab(r, group));
+        if (!state.items.has(key)) {
+          const m = fromSketchfab(r, group);
+          m.rigged = state.game.rigged;
+          state.items.set(key, m);
+        }
       }
       state.cursors[group.id] = data.next || null;
       delete state.errors[group.id];
@@ -436,6 +466,7 @@
   const stem = (w) => w.replace(/(ies)$/, "y").replace(/(es|s)$/, "");
 
   async function searchPolyhaven(query, token) {
+    if (state.game.animated || state.game.rigged) return; // Poly Haven has no animated or rigged models
     try {
       const index = await loadPolyhaven();
       if (token !== state.token) return;
@@ -443,6 +474,7 @@
       if (!tokens.length) return;
       for (const { id, a, hay } of index) {
         if (!tokens.every((t) => hay.includes(t))) continue;
+        if (state.game.budget && (a.polycount || 0) > Number(state.game.budget)) continue;
         const m = {
           key: "ph:" + id,
           source: "Poly Haven",
@@ -499,6 +531,7 @@
     likes: (a, b) => b.quality.parts[0].v - a.quality.parts[0].v,
     newest: (a, b) => b.published - a.published,
     relevance: (a, b) => a.order - b.order,
+    lowpoly: (a, b) => (a.faces || Infinity) - (b.faces || Infinity),
   };
 
   function priceText(m) {
@@ -520,9 +553,13 @@
     const stats = [];
     if (m.source === "Sketchfab") stats.push(`♥ ${fmt(m.likes)}`, `${fmt(m.views)} views`);
     else stats.push(`${fmt(m.downloads)} downloads`);
-    if (m.faces) stats.push(`${fmt(m.faces)} ${m.source === "Poly Haven" ? "polys" : "faces"}`);
+    if (m.faces) stats.push(`${fmt(m.faces)} ${m.source === "Poly Haven" ? "polys" : "triangles"}`);
     if (m.texRes) stats.push(`${m.texRes >= 1024 ? m.texRes / 1024 + "K" : m.texRes + "px"} textures`);
     if (m.animated) stats.push("animated");
+    if (m.rigged) stats.push("rigged");
+    const formats = m.source === "Poly Haven" ? ["glTF", "FBX", "Blend", "USD"]
+      : ["glb", "gltf", "usdz", "source"].filter((f) => (m.formats || []).includes(f))
+          .map((f) => ({ glb: "GLB", gltf: "glTF", usdz: "USDZ", source: "Original file" }[f]));
 
     const breakdown = m.quality.parts.map((p) =>
       `<tr><td>${esc(p.label)}</td><td>${p.v.toFixed(1)} / ${p.max}</td></tr>`).join("");
@@ -548,6 +585,7 @@
           </div>
           <div class="note">${esc(L.note)}</div>
           <div class="meta">${stats.map(esc).join(" · ")}</div>
+          ${formats.length ? `<div class="meta">Download: ${formats.map(esc).join(", ")}</div>` : ""}
           <div class="actions">
             <a class="btn" href="${esc(m.url)}" target="_blank" rel="noopener">Open on ${esc(m.source)} ↗</a>
             ${m.embedUrl ? `<button type="button" data-view="${esc(m.key)}">3D preview</button>` : ""}
@@ -587,6 +625,7 @@
     if (!query) return;
     const token = ++state.token;
     Object.assign(state, { query, items: new Map(), order: 0, cursors: {}, errors: {}, loading: true, priceQueue: [] });
+    state.game = { budget: $("#budget").value, animated: $("#animated").checked, rigged: $("#rigged").checked };
     syncUrl();
     renderElsewhere(query);
     render();
@@ -638,6 +677,9 @@
     if (f.sort !== "quality") p.set("sort", f.sort);
     if (f.noCredit) p.set("nocredit", "1");
     if (f.canModify) p.set("modify", "1");
+    if ($("#budget").value) p.set("budget", $("#budget").value);
+    if ($("#animated").checked) p.set("animated", "1");
+    if ($("#rigged").checked) p.set("rigged", "1");
     const s = p.toString();
     try { history.replaceState(null, "", s ? "?" + s : location.pathname); } catch (_) {}
   }
@@ -649,12 +691,19 @@
     if (p.get("sort") && SORTERS[p.get("sort")]) $("#sort").value = p.get("sort");
     $("#noCredit").checked = p.get("nocredit") === "1";
     $("#canModify").checked = p.get("modify") === "1";
+    if ([...$("#budget").options].some((o) => o.value === p.get("budget"))) $("#budget").value = p.get("budget");
+    $("#animated").checked = p.get("animated") === "1";
+    $("#rigged").checked = p.get("rigged") === "1";
     return p.get("q") || "";
   }
 
   // ---------- Events ----------
   $("#searchForm").addEventListener("submit", (e) => { e.preventDefault(); search($("#q").value); });
-  $("#filters").addEventListener("change", () => { syncUrl(); render(); });
+  $("#filters").addEventListener("change", (e) => {
+    syncUrl();
+    if (e.target.matches("[data-research]") && state.query) search(state.query);
+    else render();
+  });
   moreBtn.addEventListener("click", loadMore);
 
   grid.addEventListener("click", (e) => {

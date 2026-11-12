@@ -23,7 +23,11 @@ Fab, CGTrader, TurboSquid, Printables, Thingiverse and Free3D have no open searc
 - **Commercial use:** any, allowed, not allowed
 - **No credit required:** CC0 and store licenses only
 - **Can share modified versions:** hides NoDerivs licenses
-- **Sort:** quality score, popularity, newest, relevance
+- **Polygon budget:** any, low-poly (≤ 5k), ≤ 20k, ≤ 50k, ≤ 100k triangles
+- **Animated** and **Rigged**, for characters and creatures
+- **Sort:** quality score, popularity, newest, relevance, fewest polygons
+
+Each card also lists the download formats (GLB, glTF, USDZ, the original upload).
 
 The query and filters are saved in the URL, so you can bookmark or share a search.
 
