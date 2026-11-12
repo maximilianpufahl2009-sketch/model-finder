@@ -156,7 +156,7 @@
   <div class="wrap">
     <header class="top">
       <h1>3D Model Finder</h1>
-      <p class="lede">Searches Sketchfab (free and store models) and Poly Haven at the same time, then ranks every result by a quality score. Filter by price and by whether the license allows commercial use.</p>
+      <p class="lede">Searches Sketchfab (free and store models), Blendkit and Poly Haven at the same time, then ranks every result by a quality score. Filter by price and by whether the license allows commercial use.</p>
     </header>
 
     <form class="search" id="searchForm" role="search">
@@ -219,6 +219,7 @@
         <span class="label">Sources</span>
         <div class="checks">
           <label><input type="checkbox" name="src" value="sketchfab" checked> Sketchfab</label>
+          <label><input type="checkbox" name="src" value="blendkit" checked> Blendkit</label>
           <label><input type="checkbox" name="src" value="polyhaven" checked> Poly Haven</label>
         </div>
       </div>
@@ -238,12 +239,12 @@
       <summary>How the quality score works</summary>
       <p>The score runs from 0 to 100 and is the sum of four parts. Click a score on any card to see its breakdown.</p>
       <ul>
-        <li><b>Popularity (up to 40):</b> likes on Sketchfab, downloads on Poly Haven, on a log scale. 5,000 likes or 100,000 downloads gets full marks.</li>
-        <li><b>Like rate (up to 15):</b> likes ÷ views on Sketchfab. 5% or more gets full marks. Poly Haven publishes no views, so it gets a neutral 10.</li>
-        <li><b>Curated (20):</b> a Sketchfab Staff Pick, or any Poly Haven model (every one is made and reviewed by their team).</li>
+        <li><b>Popularity (up to 40):</b> likes on Sketchfab, bookmarks on Blendkit, downloads on Poly Haven, on a log scale. 5,000 likes, 1,000 bookmarks or 100,000 downloads gets full marks.</li>
+        <li><b>Like rate or rating (up to 15):</b> likes ÷ views on Sketchfab (5% or more gets full marks). On Blendkit, the 1–10 quality rating from reviewers, counted fully once 3 people have rated. Poly Haven publishes neither, so it gets a neutral 10.</li>
+        <li><b>Curated (up to 20):</b> a Sketchfab Staff Pick (20), any Poly Haven model (20, every one is made by their team), or any Blendkit model (10, every upload is checked by moderators).</li>
         <li><b>Craft (up to 25):</b> texture resolution (up to 15), a full texture set of 3 or more maps (5), and a written description (5).</li>
       </ul>
-      <p>The polygon budget, animated and rigged filters are applied by Sketchfab during the search, so you get a full page of matching models instead of a filtered-down handful. Poly Haven has no animated or rigged models, so it drops out when you tick either box.</p>
+      <p>The polygon budget, animated and rigged filters are applied by Sketchfab and Blendkit during the search, so you get a full page of matching models instead of a filtered-down handful. Poly Haven has no animated or rigged models, so it drops out when you tick either box.</p>
       <p>This is a rule of thumb built on public signals. It can't see topology, UVs or scale. Open the 3D preview before you buy anything.</p>
       <p>Licenses are read from each site's own data. Check the license on the model page before you use a model in a commercial project.</p>
     </details>
@@ -276,17 +277,30 @@
     "Standard":                                { short: "Standard",     commercial: true,  credit: false, modify: true,  note: "Sketchfab store license. Commercial use allowed with basic restrictions." },
     "Editorial":                               { short: "Editorial",    commercial: false, credit: false, modify: true,  note: "Only for news or public-interest use. Not for products or ads." },
   };
+  const BLENDKIT_RF = { short: "Royalty Free", commercial: true, credit: false, modify: false, warn: "Can't resell or share the file",
+    note: "Commercial use OK, no credit needed. In a game the model must be packed so players can't extract it, and you can't resell the model itself." };
   const UNKNOWN_LICENSE = { short: "Unknown license", commercial: null, credit: null, modify: null, note: "No license data. Check the model page." };
 
   // ---------- Sources ----------
   const SF_API = "https://api.sketchfab.com/v3";
   const SF_GROUPS = [
     // pages = how many pages of 24 to fetch up front, so the ranking runs over a bigger pool
-    { id: "sf-free", params: { downloadable: "true" }, price: "free", pages: 5 },
-    { id: "sf-st",   params: { license: "st" },        price: "paid", pages: 3 },
-    { id: "sf-ed",   params: { license: "ed" },        price: "paid", pages: 1 },
+    { id: "sf-free", src: "sketchfab", params: { downloadable: "true" }, price: "free", pages: 5 },
+    { id: "sf-st",   src: "sketchfab", params: { license: "st" },        price: "paid", pages: 3 },
+    { id: "sf-ed",   src: "sketchfab", params: { license: "ed" },        price: "paid", pages: 1 },
   ];
   const PAGE = 24;
+
+  // Blendkit's API blocks requests from other websites, so it goes through a small
+  // Cloudflare Worker (source: proxy/worker.js). 48 results per page.
+  const PROXY = "https://modelfinderproxy.maximilianpufahl2009.workers.dev";
+  const BK_GROUPS = [
+    { id: "bk-free", src: "blendkit", price: "free", pages: 2 },
+    { id: "bk-paid", src: "blendkit", price: "paid", pages: 1 },
+  ];
+  const GROUPS = [...SF_GROUPS, ...BK_GROUPS];
+  const firstUrl = (g, q) => g.src === "sketchfab" ? sfSearchUrl(g, q) : bkSearchUrl(g, q, 1);
+  const fetchGroup = (g, url, token) => g.src === "sketchfab" ? fetchSketchfabGroup(g, url, token) : fetchBlendkitGroup(g, url, token);
 
   // ---------- State ----------
   const state = {
@@ -451,6 +465,80 @@
     }
   }
 
+  // ---------- Blendkit ----------
+  function scoreBlendkit(m) {
+    const parts = [];
+    parts.push({ label: `Popularity (${fmt(m.bookmarks)} bookmarks)`, v: 40 * logScore(m.bookmarks, 1000), max: 40 });
+    if (m.qualityCount > 0 && m.qualityAvg != null) {
+      const v = 15 * clamp01((m.qualityAvg - 5) / 5) * Math.min(1, m.qualityCount / 3);
+      parts.push({ label: `Rating (${m.qualityAvg.toFixed(1)}/10 from ${m.qualityCount})`, v, max: 15 });
+    } else {
+      parts.push({ label: "Rating (none yet, neutral)", v: 7, max: 15 });
+    }
+    parts.push({ label: "Moderated library", v: 10, max: 20 });
+    const t = m.texRes != null ? textureScore(m.texRes) : m.texCount === 0 ? { v: 4, note: "procedural" } : textureScore(null);
+    parts.push({ label: `Textures (${t.note})`, v: t.v, max: 15 });
+    parts.push({ label: m.pbr ? "Texture set (PBR)" : `Texture set (${m.texCount ?? "?"} maps)`, v: m.pbr || m.texCount >= 3 ? 5 : 0, max: 5 });
+    parts.push({ label: "Description", v: (m.descLen || 0) >= 80 ? 5 : 0, max: 5 });
+    return finish(parts);
+  }
+
+  function bkSearchUrl(group, query, page) {
+    const p = new URLSearchParams({ q: query, price: group.price, page: String(page) });
+    const g = state.game;
+    if (g.budget) p.set("budget", g.budget);
+    if (g.animated) p.set("animated", "1");
+    if (g.rigged) p.set("rigged", "1");
+    return `${PROXY}/blendkit/search?${p}`;
+  }
+
+  async function fetchBlendkitGroup(group, url, token) {
+    try {
+      const res = await fetch(url);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "HTTP " + res.status);
+      if (token !== state.token) return;
+      for (const r of data.results || []) {
+        const key = "bk:" + r.id;
+        if (state.items.has(key)) continue;
+        const m = {
+          key,
+          source: "Blendkit",
+          name: r.name,
+          author: (r.author || "").trim(),
+          url: `https://www.blendkit.com/asset-gallery-detail/${encodeURIComponent(r.baseId)}/`,
+          thumb: r.thumb,
+          bookmarks: r.bookmarks || 0,
+          qualityAvg: r.qualityAvg,
+          qualityCount: r.qualityCount || 0,
+          published: r.created ? Date.parse(r.created) : 0,
+          faces: r.faces || 0,
+          texRes: r.texRes,
+          texCount: r.texCount,
+          pbr: r.pbr,
+          descLen: r.descLen,
+          animated: r.animated,
+          rigged: r.rigged,
+          formats: r.formats || [],
+          licenseLabel: r.license,
+          license: r.license === "cc_zero" ? LICENSES["CC0 Public Domain"] : BLENDKIT_RF,
+          price: r.isFree ? "free" : "paid",
+          priceCents: r.isFree ? 0 : null,
+          order: state.order++,
+        };
+        m.quality = scoreBlendkit(m);
+        state.items.set(key, m);
+      }
+      const page = Number(new URL(url).searchParams.get("page")) || 1;
+      state.cursors[group.id] = data.hasNext && page < 10 ? bkSearchUrl(group, state.query, page + 1) : null;
+      delete state.errors.bk;
+    } catch (e) {
+      if (token !== state.token) return;
+      state.errors.bk = "Blendkit: " + (e instanceof TypeError ? "proxy not reachable" : e.message || "network error");
+      state.cursors[group.id] = null;
+    }
+  }
+
   // ---------- Poly Haven ----------
   async function loadPolyhaven() {
     if (polyhavenIndex) return polyhavenIndex;
@@ -518,6 +606,7 @@
   function passes(m, f) {
     if (m.source === "Sketchfab" && !f.sources.has("sketchfab")) return false;
     if (m.source === "Poly Haven" && !f.sources.has("polyhaven")) return false;
+    if (m.source === "Blendkit" && !f.sources.has("blendkit")) return false;
     if (f.price !== "all" && m.price !== f.price) return false;
     if (f.commercial === "yes" && m.license.commercial !== true) return false;
     if (f.commercial === "no" && m.license.commercial !== false) return false;
@@ -537,6 +626,7 @@
 
   function priceText(m) {
     if (m.price === "free") return "Free";
+    if (m.source === "Blendkit") return "Subscription";
     if (m.priceCents === undefined) return "Paid";
     if (m.priceCents === null) return "Paid, see site";
     if (m.priceCents === 0) return "Free";
@@ -553,12 +643,17 @@
     const credit = L.credit ? `<span class="badge warn">Credit required</span>` : "";
     const stats = [];
     if (m.source === "Sketchfab") stats.push(`♥ ${fmt(m.likes)}`, `${fmt(m.views)} views`);
-    else stats.push(`${fmt(m.downloads)} downloads`);
+    else if (m.source === "Blendkit") {
+      stats.push(`${fmt(m.bookmarks)} bookmarks`);
+      if (m.qualityCount) stats.push(`rated ${m.qualityAvg.toFixed(1)}/10`);
+    } else stats.push(`${fmt(m.downloads)} downloads`);
     if (m.faces) stats.push(`${fmt(m.faces)} ${m.source === "Poly Haven" ? "polys" : "triangles"}`);
     if (m.texRes) stats.push(`${m.texRes >= 1024 ? m.texRes / 1024 + "K" : m.texRes + "px"} textures`);
     if (m.animated) stats.push("animated");
     if (m.rigged) stats.push("rigged");
     const formats = m.source === "Poly Haven" ? ["glTF", "FBX", "Blend", "USD"]
+      : m.source === "Blendkit" ? ["gltf", "gltf_godot", "blend"].filter((f) => m.formats.includes(f))
+          .map((f) => ({ gltf: "GLB", gltf_godot: "GLB for Godot", blend: "Blend" }[f]))
       : ["glb", "gltf", "usdz", "source"].filter((f) => (m.formats || []).includes(f))
           .map((f) => ({ glb: "GLB", gltf: "glTF", usdz: "USDZ", source: "Original file" }[f]));
 
@@ -582,9 +677,10 @@
           <div class="badges">
             ${commercial}${credit}
             <span class="badge" title="${esc(L.note)}">${esc(L.short)}</span>
-            ${L.modify === false ? `<span class="badge warn">No modified versions</span>` : ""}
+            ${L.modify === false ? `<span class="badge warn">${esc(L.warn || "No modified versions")}</span>` : ""}
           </div>
           <div class="note">${esc(L.note)}</div>
+          ${m.source === "Blendkit" ? `<div class="note">${m.price === "paid" ? "Needs Blendkit's paid Full Plan to download." : "Free Blendkit account needed to download."}</div>` : ""}
           <div class="meta">${stats.map(esc).join(" · ")}</div>
           ${formats.length ? `<div class="meta">Download: ${formats.map(esc).join(", ")}</div>` : ""}
           <div class="actions">
@@ -615,8 +711,8 @@
       grid.innerHTML = `<div class="empty">${all.length ? "Nothing matches these filters. Try loosening them, or load more results." : "No models found. Try a simpler or more general word."}</div>`;
     }
 
-    const hasMore = SF_GROUPS.some((g) => state.cursors[g.id]);
-    moreBtn.hidden = !state.query || !hasMore || !f.sources.has("sketchfab");
+    const hasMore = GROUPS.some((g) => state.cursors[g.id] && f.sources.has(g.src));
+    moreBtn.hidden = !state.query || !hasMore;
     moreBtn.disabled = state.loading;
   }
 
@@ -633,15 +729,15 @@
 
     // Round 1: first page of every source. Show those right away, then keep fetching
     // further pages (each page needs the previous page's cursor) and re-rank after each round.
-    const jobs = SF_GROUPS.map((g) => fetchSketchfabGroup(g, sfSearchUrl(g, query), token));
+    const jobs = GROUPS.map((g) => fetchGroup(g, firstUrl(g, query), token));
     jobs.push(searchPolyhaven(query, token));
     await Promise.all(jobs);
     for (let round = 2; ; round++) {
       if (token !== state.token) return;
       render();
-      const next = SF_GROUPS.filter((g) => round <= g.pages && state.cursors[g.id]);
+      const next = GROUPS.filter((g) => round <= g.pages && state.cursors[g.id]);
       if (!next.length) break;
-      await Promise.all(next.map((g) => fetchSketchfabGroup(g, state.cursors[g.id], token)));
+      await Promise.all(next.map((g) => fetchGroup(g, state.cursors[g.id], token)));
     }
     state.loading = false;
     render();
@@ -649,11 +745,12 @@
 
   async function loadMore() {
     const token = state.token;
+    const f = readFilters();
     state.loading = true; render();
     for (let i = 0; i < 2; i++) { // two more pages per source
-      const next = SF_GROUPS.filter((g) => state.cursors[g.id]);
+      const next = GROUPS.filter((g) => state.cursors[g.id] && f.sources.has(g.src));
       if (!next.length) break;
-      await Promise.all(next.map((g) => fetchSketchfabGroup(g, state.cursors[g.id], token)));
+      await Promise.all(next.map((g) => fetchGroup(g, state.cursors[g.id], token)));
       if (token !== state.token) return;
       render();
     }
