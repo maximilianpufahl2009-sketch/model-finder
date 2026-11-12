@@ -281,9 +281,10 @@
   // ---------- Sources ----------
   const SF_API = "https://api.sketchfab.com/v3";
   const SF_GROUPS = [
-    { id: "sf-free", params: { downloadable: "true" }, price: "free" },
-    { id: "sf-st",   params: { license: "st" },        price: "paid" },
-    { id: "sf-ed",   params: { license: "ed" },        price: "paid" },
+    // pages = how many pages of 24 to fetch up front, so the ranking runs over a bigger pool
+    { id: "sf-free", params: { downloadable: "true" }, price: "free", pages: 5 },
+    { id: "sf-st",   params: { license: "st" },        price: "paid", pages: 3 },
+    { id: "sf-ed",   params: { license: "ed" },        price: "paid", pages: 1 },
   ];
   const PAGE = 24;
 
@@ -603,7 +604,7 @@
     shown.forEach((m) => { if (m.price === "paid") queuePrice(m); });
 
     const bits = [];
-    if (state.loading) bits.push("Searching…");
+    if (state.loading) bits.push(all.length ? `Loading more results… ${all.length} so far` : "Searching…");
     if (state.query && !state.loading) {
       bits.push(`${shown.length} of ${all.length} results match your filters`);
     }
@@ -630,14 +631,18 @@
     renderElsewhere(query);
     render();
 
-    // First page of every group, plus a second page of free and store models for a deeper pool.
+    // Round 1: first page of every source. Show those right away, then keep fetching
+    // further pages (each page needs the previous page's cursor) and re-rank after each round.
     const jobs = SF_GROUPS.map((g) => fetchSketchfabGroup(g, sfSearchUrl(g, query), token));
     jobs.push(searchPolyhaven(query, token));
     await Promise.all(jobs);
-    if (token !== state.token) return;
-    await Promise.all(SF_GROUPS.filter((g) => g.id !== "sf-ed" && state.cursors[g.id])
-      .map((g) => fetchSketchfabGroup(g, state.cursors[g.id], token)));
-    if (token !== state.token) return;
+    for (let round = 2; ; round++) {
+      if (token !== state.token) return;
+      render();
+      const next = SF_GROUPS.filter((g) => round <= g.pages && state.cursors[g.id]);
+      if (!next.length) break;
+      await Promise.all(next.map((g) => fetchSketchfabGroup(g, state.cursors[g.id], token)));
+    }
     state.loading = false;
     render();
   }
@@ -645,9 +650,13 @@
   async function loadMore() {
     const token = state.token;
     state.loading = true; render();
-    await Promise.all(SF_GROUPS.filter((g) => state.cursors[g.id])
-      .map((g) => fetchSketchfabGroup(g, state.cursors[g.id], token)));
-    if (token !== state.token) return;
+    for (let i = 0; i < 2; i++) { // two more pages per source
+      const next = SF_GROUPS.filter((g) => state.cursors[g.id]);
+      if (!next.length) break;
+      await Promise.all(next.map((g) => fetchSketchfabGroup(g, state.cursors[g.id], token)));
+      if (token !== state.token) return;
+      render();
+    }
     state.loading = false; render();
   }
 
