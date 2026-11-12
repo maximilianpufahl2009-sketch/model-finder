@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>3D Model Finder</title>
+  <meta name="description" content="Search Sketchfab and Poly Haven at once, ranked by a quality score, filterable by price and commercial license.">
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --bg: #f5f5f3;
+      --surface: #ffffff;
+      --surface-2: #eeeeeb;
+      --ink: #161614;
+      --ink-2: #5d5d58;
+      --line: #dcdcd6;
+      --accent: #2f5bea;
+      --ok: #1d7a46;
+      --ok-bg: #e2f3e8;
+      --no: #b3261e;
+      --no-bg: #fbe5e3;
+      --warn: #8a5a00;
+      --warn-bg: #fbefd6;
+      --radius: 14px;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #121211;
+        --surface: #1c1c1a;
+        --surface-2: #262623;
+        --ink: #f1f1ec;
+        --ink-2: #a3a39b;
+        --line: #33332f;
+        --accent: #7c9bff;
+        --ok: #6fd69b;
+        --ok-bg: #173323;
+        --no: #ff8a80;
+        --no-bg: #3a1a18;
+        --warn: #f2c15a;
+        --warn-bg: #352812;
+        color-scheme: dark;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    a { color: inherit; }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 0 16px; }
+
+    header.top { padding: 28px 0 8px; }
+    h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.02em; }
+    .lede { margin: 0; color: var(--ink-2); max-width: 70ch; }
+
+    form.search { display: flex; gap: 8px; margin: 20px 0 14px; }
+    form.search input {
+      flex: 1; min-width: 0;
+      font: inherit; font-size: 17px;
+      padding: 12px 16px;
+      border: 1px solid var(--line); border-radius: 12px;
+      background: var(--surface); color: var(--ink);
+    }
+    form.search input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    button, .btn {
+      font: inherit; cursor: pointer;
+      border: 1px solid var(--line); border-radius: 10px;
+      background: var(--surface); color: var(--ink);
+      padding: 8px 14px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+    }
+    button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); padding: 12px 22px; font-weight: 600; }
+    button:disabled { opacity: .5; cursor: default; }
+
+    .filters {
+      display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: flex-end;
+      padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    }
+    .filters .group { display: flex; flex-direction: column; gap: 6px; }
+    .filters .label { font-size: 12px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; }
+    .seg { display: inline-flex; background: var(--surface-2); border-radius: 10px; padding: 3px; }
+    .seg input { position: absolute; opacity: 0; pointer-events: none; }
+    .seg label { padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 14px; white-space: nowrap; }
+    .seg input:checked + label { background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.15); font-weight: 600; }
+    .seg input:focus-visible + label { outline: 2px solid var(--accent); }
+    select { font: inherit; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+    .checks { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; padding: 6px 0; }
+    .checks label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+
+    .status { margin: 16px 0 10px; color: var(--ink-2); font-size: 14px; min-height: 20px; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+    .status .err { color: var(--no); }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+    .card {
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    .thumb { position: relative; aspect-ratio: 4/3; background: var(--surface-2); display: block; }
+    .thumb { overflow: hidden; }
+    .thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+    .score {
+      background: rgba(0,0,0,.72); color: #fff; border-radius: 999px;
+      padding: 4px 10px; font-weight: 700; font-size: 14px; border: 0;
+      cursor: pointer;
+    }
+    .score small { font-weight: 500; opacity: .75; }
+    .rank { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,.55); color: #fff; border-radius: 999px; padding: 3px 9px; font-size: 12px; }
+    .body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+    .title { font-weight: 600; margin: 0; line-height: 1.3; overflow-wrap: anywhere; }
+    .title a { text-decoration: none; }
+    .title a:hover { text-decoration: underline; }
+    .meta { font-size: 13px; color: var(--ink-2); }
+    .badges { display: flex; flex-wrap: wrap; gap: 6px; }
+    .badge { font-size: 12px; padding: 3px 8px; border-radius: 6px; background: var(--surface-2); white-space: nowrap; }
+    .badge.ok { background: var(--ok-bg); color: var(--ok); }
+    .badge.no { background: var(--no-bg); color: var(--no); }
+    .badge.warn { background: var(--warn-bg); color: var(--warn); }
+    .badge.price { font-weight: 700; }
+    .note { font-size: 12px; color: var(--ink-2); }
+    .actions { margin-top: auto; display: flex; flex-wrap: wrap; gap: 8px; padding-top: 4px; }
+    .actions .btn, .actions button { font-size: 13px; padding: 6px 10px; white-space: nowrap; }
+
+    .breakdown { display: none; font-size: 12px; background: var(--surface-2); border-radius: 8px; padding: 8px 10px; }
+    .breakdown.open { display: block; }
+    .breakdown table { width: 100%; border-collapse: collapse; }
+    .breakdown td { padding: 2px 0; }
+    .breakdown td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .more { display: flex; justify-content: center; margin: 24px 0; }
+    .empty { padding: 40px 0; text-align: center; color: var(--ink-2); }
+
+    section.elsewhere { margin: 32px 0; padding: 16px; border: 1px dashed var(--line); border-radius: var(--radius); }
+    section.elsewhere h2 { font-size: 16px; margin: 0 0 4px; }
+    section.elsewhere p { margin: 0 0 12px; color: var(--ink-2); font-size: 14px; }
+    section.elsewhere .links { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    details.how { margin: 0 0 40px; color: var(--ink-2); font-size: 14px; }
+    details.how summary { cursor: pointer; color: var(--ink); font-weight: 600; }
+    details.how li { margin: 4px 0; }
+
+    dialog { border: 0; padding: 0; border-radius: var(--radius); width: min(960px, 96vw); background: var(--surface); color: var(--ink); }
+    dialog::backdrop { background: rgba(0,0,0,.6); }
+    dialog .bar { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; gap: 10px; }
+    dialog iframe { width: 100%; aspect-ratio: 16/10; border: 0; display: block; }
+
+    @media (max-width: 560px) {
+      form.search { flex-direction: column; }
+      .filters { gap: 12px; }
+      .seg label { padding: 6px 9px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <h1>3D Model Finder</h1>
+      <p class="lede">Searches Sketchfab (free and store models) and Poly Haven at the same time, then ranks every result by a quality score. Filter by price and by whether the license allows commercial use.</p>
+    </header>
+
+    <form class="search" id="searchForm" role="search">
+      <input id="q" type="search" placeholder="What do you need? e.g. office chair, oak tree, sports car" autocomplete="off" aria-label="Search 3D models">
+      <button class="primary" type="submit">Search</button>
+    </form>
+
+    <div class="filters" id="filters">
+      <div class="group">
+        <span class="label">Price</span>
+        <div class="seg" role="radiogroup" aria-label="Price">
+          <input type="radio" name="price" id="p-all" value="all" checked><label for="p-all">All</label>
+          <input type="radio" name="price" id="p-free" value="free"><label for="p-free">Free</label>
+          <input type="radio" name="price" id="p-paid" value="paid"><label for="p-paid">Paid</label>
+        </div>
+      </div>
+      <div class="group">
+        <span class="label">Commercial use</span>
+        <div class="seg" role="radiogroup" aria-label="Commercial use">
+          <input type="radio" name="commercial" id="c-any" value="any" checked><label for="c-any">Any</label>
+          <input type="radio" name="commercial" id="c-yes" value="yes"><label for="c-yes">Allowed</label>
+          <input type="radio" name="commercial" id="c-no" value="no"><label for="c-no">Not allowed</label>
+        </div>
+      </div>
+      <div class="group">
+        <label class="label" for="sort">Sort by</label>
+        <select id="sort">
+          <option value="quality">Quality score</option>
+          <option value="likes">Most popular</option>
+          <option value="newest">Newest</option>
+          <option value="relevance">Relevance</option>
+        </select>
+      </div>
+      <div class="group">
+        <span class="label">More</span>
+        <div class="checks">
+          <label><input type="checkbox" id="noCredit"> No credit required</label>
+          <label><input type="checkbox" id="canModify"> Can share modified versions</label>
+        </div>
+      </div>
+      <div class="group">
+        <span class="label">Sources</span>
+        <div class="checks">
+          <label><input type="checkbox" name="src" value="sketchfab" checked> Sketchfab</label>
+          <label><input type="checkbox" name="src" value="polyhaven" checked> Poly Haven</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="status" id="status" aria-live="polite"></div>
+    <div class="grid" id="grid"></div>
+    <div class="more"><button id="moreBtn" hidden>Load more results</button></div>
+
+    <section class="elsewhere" id="elsewhere" hidden>
+      <h2>Also look on these sites</h2>
+      <p>These marketplaces have no open search API, so their models can't be fetched and ranked here. The links open their own search for your term.</p>
+      <div class="links" id="elsewhereLinks"></div>
+    </section>
+
+    <details class="how">
+      <summary>How the quality score works</summary>
+      <p>The score runs from 0 to 100 and is the sum of four parts. Click a score on any card to see its breakdown.</p>
+      <ul>
+        <li><b>Popularity (up to 40):</b> likes on Sketchfab, downloads on Poly Haven, on a log scale. 5,000 likes or 100,000 downloads gets full marks.</li>
+        <li><b>Like rate (up to 15):</b> likes ÷ views on Sketchfab. 5% or more gets full marks. Poly Haven publishes no views, so it gets a neutral 10.</li>
+        <li><b>Curated (20):</b> a Sketchfab Staff Pick, or any Poly Haven model (every one is made and reviewed by their team).</li>
+        <li><b>Craft (up to 25):</b> texture resolution (up to 15), a full texture set of 3 or more maps (5), and a written description (5).</li>
+      </ul>
+      <p>This is a rule of thumb built on public signals. It can't see topology, UVs or scale. Open the 3D preview before you buy anything.</p>
+      <p>Licenses are read from each site's own data. Check the license on the model page before you use a model in a commercial project.</p>
+    </details>
+  </div>
+
+  <dialog id="viewer">
+    <div class="bar">
+      <strong id="viewerTitle"></strong>
+      <button type="button" id="viewerClose">Close</button>
+    </div>
+    <iframe id="viewerFrame" title="3D preview" allow="autoplay; fullscreen; xr-spatial-tracking" allowfullscreen></iframe>
+  </dialog>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------- Licenses ----------
+  // commercial: may the model be used in a commercial product?
+  // credit: must the author be credited?  modify: may modified versions be shared?
+  const LICENSES = {
+    "CC0 Public Domain":                       { short: "CC0",          commercial: true,  credit: false, modify: true,  note: "Public domain. Use it for anything." },
+    "CC Attribution":                          { short: "CC BY",        commercial: true,  credit: true,  modify: true,  note: "Credit the author." },
+    "CC Attribution-ShareAlike":               { short: "CC BY-SA",     commercial: true,  credit: true,  modify: true,  note: "Credit the author. Changed versions must use the same license." },
+    "CC Attribution-NoDerivs":                 { short: "CC BY-ND",     commercial: true,  credit: true,  modify: false, note: "Credit the author. You can't share modified versions." },
+    "CC Attribution-NonCommercial":            { short: "CC BY-NC",     commercial: false, credit: true,  modify: true,  note: "Credit the author. No commercial use." },
+    "CC Attribution-NonCommercial-ShareAlike": { short: "CC BY-NC-SA",  commercial: false, credit: true,  modify: true,  note: "Credit the author. No commercial use." },
+    "CC Attribution-NonCommercial-NoDerivs":   { short: "CC BY-NC-ND",  commercial: false, credit: true,  modify: false, note: "Credit the author. No commercial use, no modified versions." },
+    "Free Standard":                           { short: "Free Standard", commercial: true, credit: false, modify: true,  note: "Sketchfab store license, free. Commercial use allowed with basic restrictions." },
+    "Standard":                                { short: "Standard",     commercial: true,  credit: false, modify: true,  note: "Sketchfab store license. Commercial use allowed with basic restrictions." },
+    "Editorial":                               { short: "Editorial",    commercial: false, credit: false, modify: true,  note: "Only for news or public-interest use. Not for products or ads." },
+  };
+  const UNKNOWN_LICENSE = { short: "Unknown license", commercial: null, credit: null, modify: null, note: "No license data. Check the model page." };
+
+  // ---------- Sources ----------
+  const SF_API = "https://api.sketchfab.com/v3";
+  const SF_GROUPS = [
+    { id: "sf-free", params: { downloadable: "true" }, price: "free" },
+    { id: "sf-st",   params: { license: "st" },        price: "paid" },
+    { id: "sf-ed",   params: { license: "ed" },        price: "paid" },
+  ];
+  const PAGE = 24;
+
+  // ---------- State ----------
+  const state = {
+    query: "",
+    token: 0,            // increments per search, so stale responses are dropped
+    items: new Map(),    // key -> model
+    order: 0,            // relevance counter
+    cursors: {},         // group id -> next URL or null
+    errors: {},
+    loading: false,
+    priceQueue: [],
+    priceActive: 0,
+  };
+  let polyhavenIndex = null; // loaded once
+
+  const $ = (s, el = document) => el.querySelector(s);
+  const grid = $("#grid"), statusEl = $("#status"), moreBtn = $("#moreBtn");
+
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmt = (n) => n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M" : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, "") + "k" : String(n ?? 0);
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+  const logScore = (n, full) => clamp01(Math.log10((n || 0) + 1) / Math.log10(full + 1));
+
+  // ---------- Quality score ----------
+  function textureScore(res) {
+    if (res == null) return { v: 7, note: "unknown" };
+    if (res >= 4096) return { v: 15, note: `${res / 1024}K` };
+    if (res >= 2048) return { v: 12, note: "2K" };
+    if (res >= 1024) return { v: 8, note: "1K" };
+    if (res > 0) return { v: 4, note: `${res}px` };
+    return { v: 0, note: "none" };
+  }
+
+  function scoreSketchfab(m) {
+    const parts = [];
+    parts.push({ label: `Popularity (${fmt(m.likes)} likes)`, v: 40 * logScore(m.likes, 5000), max: 40 });
+    const rate = m.views > 0 ? m.likes / m.views : 0;
+    const damp = Math.min(1, (m.views || 0) / 200); // few views = unreliable rate
+    parts.push({ label: `Like rate (${(rate * 100).toFixed(1)}%)`, v: 15 * clamp01(rate / 0.05) * damp, max: 15 });
+    parts.push({ label: m.staffPick ? "Staff Pick" : "Not a Staff Pick", v: m.staffPick ? 20 : 0, max: 20 });
+    const t = textureScore(m.texRes);
+    parts.push({ label: `Textures (${t.note})`, v: t.v, max: 15 });
+    parts.push({ label: `Texture set (${m.texCount ?? "?"} maps)`, v: m.texCount == null ? 2 : m.texCount >= 3 ? 5 : 0, max: 5 });
+    parts.push({ label: "Description", v: (m.descLen || 0) >= 80 ? 5 : 0, max: 5 });
+    return finish(parts);
+  }
+
+  function scorePolyhaven(m) {
+    const parts = [];
+    parts.push({ label: `Popularity (${fmt(m.downloads)} downloads)`, v: 40 * logScore(m.downloads, 100000), max: 40 });
+    parts.push({ label: "Like rate (no data, neutral)", v: 10, max: 15 });
+    parts.push({ label: "Curated library", v: 20, max: 20 });
+    const t = textureScore(m.texRes);
+    parts.push({ label: `Textures (${t.note})`, v: t.v, max: 15 });
+    parts.push({ label: "Texture set (full PBR)", v: 5, max: 5 });
+    parts.push({ label: "Description", v: 5, max: 5 });
+    return finish(parts);
+  }
+
+  function finish(parts) {
+    const score = Math.round(parts.reduce((s, p) => s + p.v, 0));
+    return { score, parts };
+  }
+
+  // ---------- Sketchfab ----------
+  function pickThumb(images, target = 520) {
+    if (!images || !images.length) return "";
+    const sorted = [...images].sort((a, b) => a.width - b.width);
+    return (sorted.find((i) => i.width >= target) || sorted[sorted.length - 1]).url;
+  }
+
+  function fromSketchfab(r, group) {
+    const archive = r.archives?.glb || r.archives?.gltf || r.archives?.source || null;
+    const label = r.license?.label || null;
+    const m = {
+      key: "sf:" + r.uid,
+      uid: r.uid,
+      source: "Sketchfab",
+      name: r.name || "Untitled",
+      author: r.user?.displayName || r.user?.username || "",
+      authorUrl: r.user?.profileUrl || "",
+      url: r.viewerUrl,
+      embedUrl: r.embedUrl,
+      thumb: pickThumb(r.thumbnails?.images),
+      likes: r.likeCount || 0,
+      views: r.viewCount || 0,
+      staffPick: !!r.staffpickedAt,
+      published: r.publishedAt ? Date.parse(r.publishedAt) : 0,
+      faces: r.faceCount || archive?.faceCount || 0,
+      texRes: archive ? archive.textureMaxResolution : null,
+      texCount: archive ? archive.textureCount : null,
+      descLen: (r.description || "").trim().length,
+      animated: (r.animationCount || 0) > 0,
+      licenseLabel: label,
+      license: LICENSES[label] || UNKNOWN_LICENSE,
+      price: group.price,          // "free" | "paid"
+      priceCents: group.price === "free" ? 0 : undefined,
+      order: state.order++,
+    };
+    m.quality = scoreSketchfab(m);
+    return m;
+  }
+
+  function sfSearchUrl(group, query) {
+    const p = new URLSearchParams({ type: "models", q: query, count: String(PAGE), ...group.params });
+    return `${SF_API}/search?${p}`;
+  }
+
+  async function fetchSketchfabGroup(group, url, token) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(res.status === 429 ? "rate limited, wait a minute" : "HTTP " + res.status);
+      const data = await res.json();
+      if (token !== state.token) return;
+      for (const r of data.results || []) {
+        if (r.isAgeRestricted) continue;
+        if (group.price === "free" && !r.isDownloadable) continue;
+        const key = "sf:" + r.uid;
+        if (!state.items.has(key)) state.items.set(key, fromSketchfab(r, group));
+      }
+      state.cursors[group.id] = data.next || null;
+      delete state.errors[group.id];
+    } catch (e) {
+      if (token !== state.token) return;
+      state.errors[group.id] = "Sketchfab: " + (e.message || "network error");
+      state.cursors[group.id] = null;
+    }
+  }
+
+  // Store prices are only in the per-model endpoint, so fetch them for visible paid cards.
+  function queuePrice(m) {
+    if (m.priceCents !== undefined || m.priceQueued) return;
+    m.priceQueued = true;
+    state.priceQueue.push(m);
+    pumpPrices();
+  }
+  function pumpPrices() {
+    while (state.priceActive < 3 && state.priceQueue.length) {
+      const m = state.priceQueue.shift();
+      state.priceActive++;
+      fetch(`${SF_API}/models/${m.uid}`)
+        .then((r) => (r.ok ? r.json() : Promise.reject()))
+        .then((d) => { m.priceCents = typeof d.price === "number" ? d.price : null; })
+        .catch(() => { m.priceCents = null; })
+        .finally(() => {
+          state.priceActive--;
+          const el = document.querySelector(`[data-price="${CSS.escape(m.key)}"]`);
+          if (el) el.textContent = priceText(m);
+          pumpPrices();
+        });
+    }
+  }
+
+  // ---------- Poly Haven ----------
+  async function loadPolyhaven() {
+    if (polyhavenIndex) return polyhavenIndex;
+    const res = await fetch("https://api.polyhaven.com/assets?t=models");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    polyhavenIndex = Object.entries(data).map(([id, a]) => ({
+      id, a,
+      hay: [a.name, ...(a.tags || []), ...(a.categories || []), a.category || ""].join(" ").toLowerCase(),
+    }));
+    return polyhavenIndex;
+  }
+
+  const stem = (w) => w.replace(/(ies)$/, "y").replace(/(es|s)$/, "");
+
+  async function searchPolyhaven(query, token) {
+    try {
+      const index = await loadPolyhaven();
+      if (token !== state.token) return;
+      const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 1).map(stem);
+      if (!tokens.length) return;
+      for (const { id, a, hay } of index) {
+        if (!tokens.every((t) => hay.includes(t))) continue;
+        const m = {
+          key: "ph:" + id,
+          source: "Poly Haven",
+          name: a.name,
+          author: Object.keys(a.authors || {}).join(", "),
+          url: `https://polyhaven.com/a/${encodeURIComponent(id)}`,
+          thumb: `https://cdn.polyhaven.com/asset_img/thumbs/${encodeURIComponent(id)}.png?width=520&height=390`,
+          downloads: a.download_count || 0,
+          published: (a.date_published || 0) * 1000,
+          faces: a.polycount || 0,
+          texRes: Array.isArray(a.max_resolution) ? Math.max(...a.max_resolution) : null,
+          licenseLabel: "CC0 Public Domain",
+          license: LICENSES["CC0 Public Domain"],
+          price: "free",
+          priceCents: 0,
+          order: state.order++,
+        };
+        m.quality = scorePolyhaven(m);
+        state.items.set(m.key, m);
+      }
+      delete state.errors.ph;
+    } catch (e) {
+      if (token !== state.token) return;
+      state.errors.ph = "Poly Haven: " + (e.message || "network error");
+    }
+  }
+
+  // ---------- Filters & render ----------
+  function readFilters() {
+    return {
+      price: $("input[name=price]:checked").value,
+      commercial: $("input[name=commercial]:checked").value,
+      sort: $("#sort").value,
+      noCredit: $("#noCredit").checked,
+      canModify: $("#canModify").checked,
+      sources: new Set([...document.querySelectorAll("input[name=src]:checked")].map((i) => i.value)),
+    };
+  }
+
+  function passes(m, f) {
+    if (m.source === "Sketchfab" && !f.sources.has("sketchfab")) return false;
+    if (m.source === "Poly Haven" && !f.sources.has("polyhaven")) return false;
+    if (f.price !== "all" && m.price !== f.price) return false;
+    if (f.commercial === "yes" && m.license.commercial !== true) return false;
+    if (f.commercial === "no" && m.license.commercial !== false) return false;
+    if (f.noCredit && m.license.credit !== false) return false;
+    if (f.canModify && m.license.modify !== true) return false;
+    return true;
+  }
+
+  const SORTERS = {
+    quality: (a, b) => b.quality.score - a.quality.score || b.likes - a.likes,
+    // Likes and downloads aren't comparable, so compare the normalised popularity part of the score.
+    likes: (a, b) => b.quality.parts[0].v - a.quality.parts[0].v,
+    newest: (a, b) => b.published - a.published,
+    relevance: (a, b) => a.order - b.order,
+  };
+
+  function priceText(m) {
+    if (m.price === "free") return "Free";
+    if (m.priceCents === undefined) return "Paid";
+    if (m.priceCents === null) return "Paid, see site";
+    if (m.priceCents === 0) return "Free";
+    return "$" + (m.priceCents / 100).toFixed(2);
+  }
+
+  function card(m, i) {
+    const L = m.license;
+    const commercial = L.commercial === true
+      ? `<span class="badge ok">✓ Commercial use</span>`
+      : L.commercial === false
+        ? `<span class="badge no">✗ No commercial use</span>`
+        : `<span class="badge warn">? Commercial use unknown</span>`;
+    const credit = L.credit ? `<span class="badge warn">Credit required</span>` : "";
+    const stats = [];
+    if (m.source === "Sketchfab") stats.push(`♥ ${fmt(m.likes)}`, `${fmt(m.views)} views`);
+    else stats.push(`${fmt(m.downloads)} downloads`);
+    if (m.faces) stats.push(`${fmt(m.faces)} ${m.source === "Poly Haven" ? "polys" : "faces"}`);
+    if (m.texRes) stats.push(`${m.texRes >= 1024 ? m.texRes / 1024 + "K" : m.texRes + "px"} textures`);
+    if (m.animated) stats.push("animated");
+
+    const breakdown = m.quality.parts.map((p) =>
+      `<tr><td>${esc(p.label)}</td><td>${p.v.toFixed(1)} / ${p.max}</td></tr>`).join("");
+
+    return `
+      <article class="card">
+        <a class="thumb" href="${esc(m.url)}" target="_blank" rel="noopener">
+          ${m.thumb ? `<img src="${esc(m.thumb)}" alt="" loading="lazy">` : ""}
+          <span class="rank">#${i + 1}</span>
+        </a>
+        <div class="body">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+            <button class="score" type="button" data-toggle="${esc(m.key)}" title="Show score breakdown">${m.quality.score}<small> / 100</small></button>
+            <span class="badge price" data-price="${esc(m.key)}">${esc(priceText(m))}</span>
+          </div>
+          <div class="breakdown" id="bd-${esc(m.key)}"><table>${breakdown}</table></div>
+          <h3 class="title"><a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.name)}</a></h3>
+          <div class="meta">${esc(m.source)}${m.author ? " · " + esc(m.author) : ""}${m.staffPick ? " · ★ Staff Pick" : ""}</div>
+          <div class="badges">
+            ${commercial}${credit}
+            <span class="badge" title="${esc(L.note)}">${esc(L.short)}</span>
+            ${L.modify === false ? `<span class="badge warn">No modified versions</span>` : ""}
+          </div>
+          <div class="note">${esc(L.note)}</div>
+          <div class="meta">${stats.map(esc).join(" · ")}</div>
+          <div class="actions">
+            <a class="btn" href="${esc(m.url)}" target="_blank" rel="noopener">Open on ${esc(m.source)} ↗</a>
+            ${m.embedUrl ? `<button type="button" data-view="${esc(m.key)}">3D preview</button>` : ""}
+          </div>
+        </div>
+      </article>`;
+  }
+
+  function render() {
+    const f = readFilters();
+    const all = [...state.items.values()];
+    const shown = all.filter((m) => passes(m, f)).sort(SORTERS[f.sort]);
+
+    grid.innerHTML = shown.map(card).join("");
+    shown.forEach((m) => { if (m.price === "paid") queuePrice(m); });
+
+    const bits = [];
+    if (state.loading) bits.push("Searching…");
+    if (state.query && !state.loading) {
+      bits.push(`${shown.length} of ${all.length} results match your filters`);
+    }
+    for (const e of Object.values(state.errors)) bits.push(`<span class="err">${esc(e)}</span>`);
+    statusEl.innerHTML = bits.map((b) => `<span>${b}</span>`).join("");
+
+    if (state.query && !state.loading && !shown.length) {
+      grid.innerHTML = `<div class="empty">${all.length ? "Nothing matches these filters. Try loosening them, or load more results." : "No models found. Try a simpler or more general word."}</div>`;
+    }
+
+    const hasMore = SF_GROUPS.some((g) => state.cursors[g.id]);
+    moreBtn.hidden = !state.query || !hasMore || !f.sources.has("sketchfab");
+    moreBtn.disabled = state.loading;
+  }
+
+  // ---------- Search ----------
+  async function search(query) {
+    query = query.trim();
+    if (!query) return;
+    const token = ++state.token;
+    Object.assign(state, { query, items: new Map(), order: 0, cursors: {}, errors: {}, loading: true, priceQueue: [] });
+    syncUrl();
+    renderElsewhere(query);
+    render();
+
+    // First page of every group, plus a second page of free and store models for a deeper pool.
+    const jobs = SF_GROUPS.map((g) => fetchSketchfabGroup(g, sfSearchUrl(g, query), token));
+    jobs.push(searchPolyhaven(query, token));
+    await Promise.all(jobs);
+    if (token !== state.token) return;
+    await Promise.all(SF_GROUPS.filter((g) => g.id !== "sf-ed" && state.cursors[g.id])
+      .map((g) => fetchSketchfabGroup(g, state.cursors[g.id], token)));
+    if (token !== state.token) return;
+    state.loading = false;
+    render();
+  }
+
+  async function loadMore() {
+    const token = state.token;
+    state.loading = true; render();
+    await Promise.all(SF_GROUPS.filter((g) => state.cursors[g.id])
+      .map((g) => fetchSketchfabGroup(g, state.cursors[g.id], token)));
+    if (token !== state.token) return;
+    state.loading = false; render();
+  }
+
+  // ---------- Other sites (links only) ----------
+  const ELSEWHERE = [
+    ["Fab (Epic)", (q) => `https://www.fab.com/search?q=${q}`],
+    ["CGTrader", (q) => `https://www.cgtrader.com/3d-models?keywords=${q}`],
+    ["TurboSquid", (q) => `https://www.turbosquid.com/Search/3D-Models/${q}`],
+    ["Printables (3D print)", (q) => `https://www.printables.com/search/models?q=${q}`],
+    ["Thingiverse (3D print)", (q) => `https://www.thingiverse.com/search?q=${q}&type=things`],
+    ["Free3D", (q) => `https://free3d.com/3d-models/${q}`],
+  ];
+  function renderElsewhere(query) {
+    const q = encodeURIComponent(query);
+    $("#elsewhereLinks").innerHTML = ELSEWHERE.map(([name, fn]) =>
+      `<a class="btn" href="${esc(fn(q))}" target="_blank" rel="noopener">${esc(name)} ↗</a>`).join("");
+    $("#elsewhere").hidden = false;
+  }
+
+  // ---------- URL state ----------
+  function syncUrl() {
+    const f = readFilters();
+    const p = new URLSearchParams();
+    if (state.query) p.set("q", state.query);
+    if (f.price !== "all") p.set("price", f.price);
+    if (f.commercial !== "any") p.set("commercial", f.commercial);
+    if (f.sort !== "quality") p.set("sort", f.sort);
+    if (f.noCredit) p.set("nocredit", "1");
+    if (f.canModify) p.set("modify", "1");
+    const s = p.toString();
+    try { history.replaceState(null, "", s ? "?" + s : location.pathname); } catch (_) {}
+  }
+  function readUrl() {
+    const p = new URLSearchParams(location.search);
+    const setRadio = (name, v) => { const el = $(`input[name=${name}][value="${CSS.escape(v || "")}"]`); if (el) el.checked = true; };
+    if (p.get("price")) setRadio("price", p.get("price"));
+    if (p.get("commercial")) setRadio("commercial", p.get("commercial"));
+    if (p.get("sort") && SORTERS[p.get("sort")]) $("#sort").value = p.get("sort");
+    $("#noCredit").checked = p.get("nocredit") === "1";
+    $("#canModify").checked = p.get("modify") === "1";
+    return p.get("q") || "";
+  }
+
+  // ---------- Events ----------
+  $("#searchForm").addEventListener("submit", (e) => { e.preventDefault(); search($("#q").value); });
+  $("#filters").addEventListener("change", () => { syncUrl(); render(); });
+  moreBtn.addEventListener("click", loadMore);
+
+  grid.addEventListener("click", (e) => {
+    const t = e.target.closest("[data-toggle]");
+    if (t) { document.getElementById("bd-" + t.dataset.toggle)?.classList.toggle("open"); return; }
+    const v = e.target.closest("[data-view]");
+    if (v) {
+      const m = state.items.get(v.dataset.view);
+      if (!m) return;
+      $("#viewerTitle").textContent = m.name;
+      $("#viewerFrame").src = m.embedUrl + "?autostart=1&ui_infos=0&ui_watermark=0";
+      $("#viewer").showModal();
+    }
+  });
+  const closeViewer = () => { $("#viewer").close(); };
+  $("#viewerClose").addEventListener("click", closeViewer);
+  $("#viewer").addEventListener("close", () => { $("#viewerFrame").src = "about:blank"; });
+  $("#viewer").addEventListener("click", (e) => { if (e.target === $("#viewer")) closeViewer(); });
+
+  const initial = readUrl();
+  if (initial) { $("#q").value = initial; search(initial); }
+  else { $("#q").focus(); render(); }
+})();
+</script>
+</body>
+</html>
